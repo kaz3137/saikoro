@@ -1,0 +1,1 @@
+{"background_color":"#f6f7f9","description":"d4〜d20対応サイコロ（暗号乱数・全目等確率）","display":"standalone","icons":[{"sizes":"192x192","src":"icons/icon-192.png","type":"image/png"},{"purpose":"any maskable","sizes":"512x512","src":"icons/icon-512.png","type":"image/png"}],"lang":"ja","name":"サイコロ ver.1","scope":"./","short_name":"サイコロ","start_url":"./index.html","theme_color":"#1f5f99"}

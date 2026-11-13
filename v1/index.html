@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>サイコロ ver.1</title>
+<meta name="theme-color" content="#1f5f99">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="サイコロ">
+<style>
+*{box-sizing:border-box}body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#f6f7f9;color:#16202a;padding:16px 16px 110px}
+h1{font-size:22px;margin:4px 0 2px}.sub{color:#5b6b7a;font-size:13px;margin-bottom:14px}
+.card{background:#fff;border:1px solid #dde3e8;border-radius:14px;padding:14px;margin-bottom:12px}
+.row{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid #eef1f3}.row:last-child{border-bottom:none}
+.dlabel{font-weight:700;font-size:18px;width:52px}.cnt{font-size:18px;width:34px;text-align:center;font-weight:700}
+button{border:1px solid #c9d3db;background:#fff;border-radius:9px;padding:7px 10px;font-size:14px;cursor:pointer}
+button:active{background:#eef4f8}.roll{width:100%;background:#1f5f99;color:#fff;border:none;font-size:18px;font-weight:700;padding:15px;border-radius:12px}
+.subtotal{font-size:13px;color:#43586a;margin-left:auto;text-align:right}
+.result{font-size:15px;line-height:1.7}.total{font-size:28px;font-weight:800}
+.crit{color:#b7791f;font-weight:700}.fumble{color:#b42318;font-weight:700}
+footer{position:fixed;left:0;right:0;bottom:0;background:#16202a;color:#fff;padding:12px 16px calc(12px + env(safe-area-inset-bottom));display:flex;gap:10px;align-items:center}
+.badge{background:#f5c542;color:#16202a;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:700;display:none}
+.hist{font-size:13px;line-height:1.6}.hist div{padding:7px 0;border-bottom:1px solid #eef1f3}
+label{font-size:14px} a{color:#1f5f99}
+</style></head><body>
+<h1>🎲 サイコロ ver.1</h1><div class="sub">d4〜d20／各0〜20個・合計最大120個／暗号乱数＋棄却サンプリングで全目等確率　<a href="../">← 一覧へ</a></div>
+<div class="card" id="controls"></div>
+<div class="card"><label><input type="checkbox" id="anim" checked> 転がるアニメーション（1〜2秒）</label></div>
+<button class="roll" id="rollBtn">振る</button>
+<div class="card result" id="result" style="margin-top:12px">まだ振っていません。</div>
+<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><strong>履歴（最新20件）</strong><button id="resetHist">リセット</button></div><div class="hist" id="history"></div></div>
+<footer><span>前回の合計</span><strong id="footTotal" style="font-size:20px">—</strong><span class="badge" id="chgBadge">設定変更あり</span><span id="footInfo" style="margin-left:auto;font-size:12px;opacity:.85"></span></footer>
+<script>
+const TYPES=[4,6,8,10,12,20], KEY='saikoro-v1-state-v1';
+let S=JSON.parse(localStorage.getItem(KEY)||'null')||{counts:{4:0,6:1,8:0,10:0,12:0,20:0},anim:true,history:[],lastTotal:null,lastConfig:null,lastDetail:''};
+const save=()=>localStorage.setItem(KEY,JSON.stringify(S));
+const totalCount=()=>TYPES.reduce((a,t)=>a+(S.counts[t]||0),0);
+function secureInt(n){ // 1..n, rejection sampling, uniform
+  const max=Math.floor(4294967296/n)*n; const buf=new Uint32Array(1);
+  do{crypto.getRandomValues(buf)}while(buf[0]>=max); return (buf[0]%n)+1;
+}
+const controls=document.getElementById('controls');
+function renderControls(){
+  controls.innerHTML=TYPES.map(t=>`<div class="row"><span class="dlabel">d${t}</span>
+  <button data-t="${t}" data-d="-5">−5</button><button data-t="${t}" data-d="-1">−1</button>
+  <span class="cnt">${S.counts[t]||0}</span>
+  <button data-t="${t}" data-d="1">＋1</button><button data-t="${t}" data-d="5">＋5</button>
+  <span class="subtotal" id="sub-${t}"></span></div>`).join('')+`<div style="font-size:13px;color:#5b6b7a;padding-top:8px">合計 ${totalCount()} / 120 個</div>`;
+  controls.querySelectorAll('button').forEach(b=>b.onclick=()=>{const t=+b.dataset.t;let v=(S.counts[t]||0)+(+b.dataset.d);v=Math.max(0,Math.min(20,v));const others=totalCount()-(S.counts[t]||0);if(others+v>120)v=120-others;S.counts[t]=v;save();renderControls();renderFooter();});
+  document.getElementById('anim').checked=S.anim;
+}
+function renderFooter(){
+  document.getElementById('footTotal').textContent=S.lastTotal==null?'—':S.lastTotal;
+  const changed=S.lastConfig && JSON.stringify(S.counts)!==JSON.stringify(S.lastConfig);
+  document.getElementById('chgBadge').style.display=changed?'inline-block':'none';
+  document.getElementById('footInfo').textContent=changed?'現在の構成は前回と異なります':'';
+}
+function renderHistory(){
+  document.getElementById('history').innerHTML=S.history.length?S.history.map(h=>`<div><strong>${h.total}</strong>　${h.detail}<br><span style="color:#7a8a99">${h.time}</span></div>`).join(''):'<div style="color:#7a8a99">履歴はありません</div>';
+}
+function doRoll(){
+  if(totalCount()===0){alert('サイコロを1個以上選んでください');return}
+  const cfg={...S.counts}; const results={}; let total=0;
+  TYPES.forEach(t=>{results[t]=Array.from({length:cfg[t]||0},()=>secureInt(t)); total+=results[t].reduce((a,b)=>a+b,0)});
+  const detail=TYPES.filter(t=>results[t].length).map(t=>`d${t}: ${results[t].join(', ')}（小計 ${results[t].reduce((a,b)=>a+b,0)}）${t===20?results[t].map(v=>v===20?' ★クリティカル':v===1?' ★ファンブル':'').join(''):''}`).join(' ／ ');
+  const finish=()=>{
+    S.lastTotal=total;S.lastConfig=cfg;S.lastDetail=detail;
+    S.history.unshift({total,detail,time:new Date().toLocaleString('ja-JP')}); S.history=S.history.slice(0,20); save();
+    document.getElementById('result').innerHTML=`<div class="total">合計 ${total}</div><div>${detail.replace(/★クリティカル/g,'<span class="crit">クリティカル!</span>').replace(/★ファンブル/g,'<span class="fumble">ファンブル…</span>')}</div>`;
+    TYPES.forEach(t=>{const el=document.getElementById('sub-'+t); if(el)el.textContent=results[t].length?`小計 ${results[t].reduce((a,b)=>a+b,0)}`:''});
+    renderFooter(); renderHistory();
+  };
+  if(!S.anim){finish();return}
+  const box=document.getElementById('result'); const iv=setInterval(()=>{box.innerHTML='<div class="total">'+TYPES.flatMap(t=>Array.from({length:cfg[t]||0},()=>secureInt(t))).join(' ・ ')+'</div><div style="color:#7a8a99">転がっています…</div>'},70);
+  setTimeout(()=>{clearInterval(iv);finish()},1200+Math.random()*600);
+}
+document.getElementById('rollBtn').onclick=doRoll;
+document.getElementById('anim').onchange=e=>{S.anim=e.target.checked;save()};
+document.getElementById('resetHist').onclick=()=>{S.history=[];save();renderHistory()};
+renderControls();renderFooter();renderHistory();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
+</script></body></html>
