@@ -4,7 +4,7 @@
 
 ## 構成
 
-- `index.html` — 入口ページ（ver.1 / ver.2 へのリンク）
+- `index.html` — 入口ページ（ver.1 / ver.2 へのリンクと、外部の「ダイス卓｜単一HTML版」 https://kaz3137.github.io/dice-roller-standalone/ へのリンク・説明）
 - `v1/` — サイコロ ver.1：単独で完結する静的ページ＋PWA（manifest / Service Worker / アイコン）
 - `v2/` — サイコロ ver.2：物理演算版＋PWA。Three.js と cannon-es は CDN（jsDelivr）から読み込みます
 
