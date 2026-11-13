@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>サイコロ ver.2（物理演算）</title>
+<meta name="theme-color" content="#7c3aed">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="サイコロ2">
+<style>
+*{box-sizing:border-box}body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#14101d;color:#ece8f5;padding:14px 14px 110px}
+h1{font-size:21px;margin:4px 0 2px}.sub{color:#a99fc4;font-size:12.5px;margin-bottom:12px;line-height:1.6}
+.card{background:#211a33;border:1px solid #3a2f57;border-radius:14px;padding:13px;margin-bottom:11px}
+.row{display:flex;align-items:center;gap:7px;padding:8px 0;border-bottom:1px solid #322a4a}.row:last-child{border-bottom:none}
+.dlabel{font-weight:700;font-size:17px;width:50px}.cnt{font-size:17px;width:30px;text-align:center;font-weight:700}
+button{border:1px solid #574a80;background:#2b2145;color:#fff;border-radius:9px;padding:7px 10px;font-size:14px;cursor:pointer}
+.roll{width:100%;background:#7c3aed;color:#fff;border:none;font-size:18px;font-weight:700;padding:15px;border-radius:12px}
+#stage{position:relative;border-radius:14px;overflow:hidden;background:#1d5c3a}
+canvas{display:block;width:100%;height:340px}
+#overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(10,8,18,.72);font-size:17px;font-weight:700}
+input[type=range]{flex:1}.srow{display:flex;align-items:center;gap:10px;padding:7px 0}.srow span{width:86px;font-size:13.5px}.srow b{width:40px;text-align:right;font-size:13.5px}
+.result{font-size:14.5px;line-height:1.7}.total{font-size:27px;font-weight:800}
+footer{position:fixed;left:0;right:0;bottom:0;background:#0d0a16;color:#fff;padding:12px 16px calc(12px + env(safe-area-inset-bottom));display:flex;gap:10px;align-items:center;border-top:1px solid #3a2f57}
+.badge{background:#f5c542;color:#16202a;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:700;display:none}
+.hist{font-size:13px;line-height:1.6}.hist div{padding:7px 0;border-bottom:1px solid #322a4a}
+a{color:#c4b0f5}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","cannon-es":"https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"}}</script>
+</head><body>
+<h1>🎲 サイコロ ver.2（物理演算）</h1>
+<div class="sub">Three.js＋cannon-es で実際に転がし、静止姿勢から出目を読み取ります（結果の先決めなし）。合計最大20個・種類ごとの上限なし。初速／回転／位置は暗号乱数。　<a href="../">← 一覧へ</a><br>※初回はライブラリ読込のため通信が必要です。</div>
+<div class="card" id="controls"></div>
+<div id="stage"><div id="overlay">計算中…</div></div>
+<div class="card"><label><input type="checkbox" id="anim" checked> アニメーション表示（OFFでも物理計算し、静止結果のみ表示）</label><br>
+<label><input type="checkbox" id="play"> 遊びモード（転がし続ける）</label>
+<div id="sliders" style="display:none;margin-top:8px">
+<div class="srow"><span>跳ね返り</span><input type="range" id="sBounce" min="0" max="0.9" step="0.01"><b id="vBounce"></b></div>
+<div class="srow"><span>摩擦</span><input type="range" id="sFriction" min="0" max="1" step="0.01"><b id="vFriction"></b></div>
+<div class="srow"><span>投げの強さ</span><input type="range" id="sPower" min="0.5" max="2" step="0.05"><b id="vPower"></b></div></div></div>
+<button class="roll" id="rollBtn">振る</button>
+<div class="card result" id="result" style="margin-top:12px">まだ振っていません。</div>
+<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><strong>履歴（最新20件）</strong><button id="resetHist">リセット</button></div><div class="hist" id="history"></div></div>
+<footer><span>前回の合計</span><strong id="footTotal" style="font-size:20px">—</strong><span class="badge" id="chgBadge">設定変更あり</span></footer>
+<script type="module">
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+const TYPES=[4,6,8,10,12,20], KEY='saikoro-v2-state-v1', COLORS={4:0xe4572e,6:0xf2f2f2,8:0x2e86e4,10:0x17a398,12:0xf5c542,20:0x9b5de5};
+let S=JSON.parse(localStorage.getItem(KEY)||'null')||{counts:{4:0,6:3,8:0,10:0,12:0,20:0},anim:true,play:false,bounce:0.45,friction:0.35,power:1,history:[],lastTotal:null,lastConfig:null};
+const save=()=>localStorage.setItem(KEY,JSON.stringify(S));
+const totalCount=()=>TYPES.reduce((a,t)=>a+(S.counts[t]||0),0);
+function secureFloat(){const b=new Uint32Array(1);crypto.getRandomValues(b);return b[0]/4294967296}
+function secureRange(a,b){return a+secureFloat()*(b-a)}
+// --- three scene ---
+const stage=document.getElementById('stage');
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2)); stage.prepend(renderer.domElement);
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x1d5c3a);
+const camera=new THREE.PerspectiveCamera(45,1,0.1,100); camera.position.set(0,11,8.5); camera.lookAt(0,0,0);
+scene.add(new THREE.AmbientLight(0xffffff,0.85)); const dl=new THREE.DirectionalLight(0xffffff,1.4); dl.position.set(5,12,4); scene.add(dl);
+const floorMesh=new THREE.Mesh(new THREE.BoxGeometry(10,0.4,10),new THREE.MeshStandardMaterial({color:0x237a4b})); floorMesh.position.y=-0.2; scene.add(floorMesh);
+// --- physics ---
+const world=new CANNON.World({gravity:new CANNON.Vec3(0,-9.82,0)});
+const matDice=new CANNON.Material('dice'), matFloor=new CANNON.Material('floor');
+let contact=new CANNON.ContactMaterial(matDice,matFloor,{restitution:S.bounce,friction:S.friction});
+let contactDD=new CANNON.ContactMaterial(matDice,matDice,{restitution:S.bounce,friction:S.friction});
+world.addContactMaterial(contact); world.addContactMaterial(contactDD);
+function applyPhysicsParams(){contact.restitution=+S.bounce;contact.friction=+S.friction;contactDD.restitution=+S.bounce;contactDD.friction=+S.friction}
+const floorBody=new CANNON.Body({mass:0,material:matFloor,shape:new CANNON.Box(new CANNON.Vec3(5,0.2,5))}); floorBody.position.set(0,-0.2,0); world.addBody(floorBody);
+[[0,5.2],[0,-5.2]].forEach(([x,z])=>{const b=new CANNON.Body({mass:0,material:matFloor,shape:new CANNON.Box(new CANNON.Vec3(5.4,3,0.2))});b.position.set(x,3,z);world.addBody(b)});
+[[5.2,0],[-5.2,0]].forEach(([x,z])=>{const b=new CANNON.Body({mass:0,material:matFloor,shape:new CANNON.Box(new CANNON.Vec3(0.2,3,5.4))});b.position.set(x,3,z);world.addBody(b)});
+function resize(){const w=stage.clientWidth;renderer.setSize(w,340);camera.aspect=w/340;camera.updateProjectionMatrix()} addEventListener("resize",resize); resize();
+// --- dice geometry / face normals ---
+function geometryFor(t){
+  const r=0.55;
+  if(t===4)return new THREE.TetrahedronGeometry(r*1.15);
+  if(t===6)return new THREE.BoxGeometry(r*1.5,r*1.5,r*1.5);
+  if(t===8)return new THREE.OctahedronGeometry(r*1.1);
+  if(t===12)return new THREE.DodecahedronGeometry(r*1.05);
+  if(t===20)return new THREE.IcosahedronGeometry(r*1.05);
+  return new THREE.CylinderGeometry(r*0.95,r*0.95,r*0.8,10); // d10 approximation (kite faces approximated)
+}
+function faceData(geo,sides){
+  const g=geo.toNonIndexed(), pos=g.attributes.position, faces=[];
+  for(let i=0;i<pos.count;i+=3){
+    const a=new THREE.Vector3().fromBufferAttribute(pos,i),b=new THREE.Vector3().fromBufferAttribute(pos,i+1),c=new THREE.Vector3().fromBufferAttribute(pos,i+2);
+    const n=new THREE.Vector3().subVectors(b,a).cross(new THREE.Vector3().subVectors(c,a)).normalize();
+    const cen=new THREE.Vector3().add(a).add(b).add(c).divideScalar(3);
+    if(!faces.some(f=>f.n.angleTo(n)<0.01)) faces.push({n,cen});
+  }
+  // If geometry yields more faces than sides (d10 cylinder), keep the side faces + top/bottom selection trimmed by caller mapping.
+  faces.forEach((f,i)=>f.value=(i%sides)+1);
+  return faces;
+}
+function convexShape(geo){
+  const g=geo.toNonIndexed(), pos=g.attributes.position, verts=[], facesIdx=[];
+  const key=new Map();
+  const vid=v=>{const k=[v.x,v.y,v.z].map(x=>x.toFixed(3)).join(','); if(!key.has(k)){key.set(k,verts.length);verts.push(new CANNON.Vec3(v.x,v.y,v.z))} return key.get(k)};
+  for(let i=0;i<pos.count;i+=3){facesIdx.push([vid(new THREE.Vector3().fromBufferAttribute(pos,i)),vid(new THREE.Vector3().fromBufferAttribute(pos,i+1)),vid(new THREE.Vector3().fromBufferAttribute(pos,i+2))])}
+  try{return new CANNON.ConvexPolyhedron({vertices:verts,faces:facesIdx})}catch(e){return new CANNON.Sphere(0.55)}
+}
+let dice=[]; // {mesh,body,faces,type}
+function clearDice(){dice.forEach(d=>{scene.remove(d.mesh);world.removeBody(d.body)});dice=[]}
+function spawn(){
+  clearDice();
+  TYPES.forEach(t=>{for(let k=0;k<(S.counts[t]||0);k++){
+    const geo=geometryFor(t);
+    const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:COLORS[t],roughness:0.45,flatShading:t!==6}));
+    mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo,12),new THREE.LineBasicMaterial({color:0x111111})));
+    scene.add(mesh);
+    const shape=t===6?new CANNON.Box(new CANNON.Vec3(0.41,0.41,0.41)):convexShape(geo);
+    const body=new CANNON.Body({mass:1,material:matDice,shape,linearDamping:0.12,angularDamping:0.18});
+    body.position.set(secureRange(-3,3),secureRange(3.5,6.5),secureRange(-3,3));
+    body.quaternion.setFromEuler(secureRange(0,6.28),secureRange(0,6.28),secureRange(0,6.28));
+    const p=+S.power;
+    body.velocity.set(secureRange(-3,3)*p,secureRange(-1,0),secureRange(-3,3)*p);
+    body.angularVelocity.set(secureRange(-9,9)*p,secureRange(-9,9)*p,secureRange(-9,9)*p);
+    world.addBody(body);
+    dice.push({mesh,body,faces:faceData(geo,t),type:t});
+  }});
+}
+function readDie(d){
+  const q=d.mesh.quaternion, up=new THREE.Vector3(0,1,0);
+  if(d.type===4){ // vertex reading: topmost vertex value = opposite of bottom face
+    let best=null,bestY=-1e9; const g=d.mesh.geometry.toNonIndexed(),pos=g.attributes.position,seen=[];
+    for(let i=0;i<pos.count;i++){const v=new THREE.Vector3().fromBufferAttribute(pos,i); if(seen.some(s=>s.distanceTo(v)<0.01))continue; seen.push(v);
+      const w=v.clone().applyQuaternion(q); if(w.y>bestY){bestY=w.y;best=v}}
+    // map top vertex index to 1..4
+    const uniq=[]; for(let i=0;i<pos.count;i++){const v=new THREE.Vector3().fromBufferAttribute(pos,i); if(!uniq.some(s=>s.distanceTo(v)<0.01))uniq.push(v)}
+    return uniq.indexOf(best)+1 || 1;
+  }
+  let bestVal=1,bestDot=-2;
+  d.faces.forEach(f=>{const w=f.n.clone().applyQuaternion(q); if(w.dot(up)>bestDot){bestDot=w.dot(up);bestVal=f.value}});
+  return Math.max(1,Math.min(d.type,bestVal));
+}
+function isLeaning(d){ // top face ambiguous when best dot is low
+  const q=d.mesh.quaternion,up=new THREE.Vector3(0,1,0); let m=-2; d.faces.forEach(f=>{m=Math.max(m,f.n.clone().applyQuaternion(q).dot(up))}); return m<0.72;
+}
+// --- UI ---
+const controls=document.getElementById('controls');
+function renderControls(){
+  controls.innerHTML=TYPES.map(t=>`<div class="row"><span class="dlabel">d${t}</span>
+  <button data-t="${t}" data-d="-5">−5</button><button data-t="${t}" data-d="-1">−1</button><span class="cnt">${S.counts[t]||0}</span>
+  <button data-t="${t}" data-d="1">＋1</button><button data-t="${t}" data-d="5">＋5</button><span id="sub-${t}" style="margin-left:auto;font-size:12.5px;color:#a99fc4"></span></div>`).join('')
+  +`<div style="font-size:12.5px;color:#a99fc4;padding-top:8px">合計 ${totalCount()} / 20 個</div>`;
+  controls.querySelectorAll('button').forEach(b=>b.onclick=()=>{const t=+b.dataset.t;let v=Math.max(0,(S.counts[t]||0)+(+b.dataset.d));const others=totalCount()-(S.counts[t]||0);if(others+v>20)v=20-others;S.counts[t]=v;save();renderControls();renderFooter()});
+}
+function renderFooter(){document.getElementById('footTotal').textContent=S.lastTotal==null?'—':S.lastTotal;
+  document.getElementById('chgBadge').style.display=(S.lastConfig&&JSON.stringify(S.counts)!==JSON.stringify(S.lastConfig))?'inline-block':'none'}
+function renderHistory(){document.getElementById('history').innerHTML=S.history.length?S.history.map(h=>`<div><strong>${h.total}</strong>　${h.detail}<br><span style="color:#8d81ad">${h.time}</span></div>`).join(''):'<div style="color:#8d81ad">履歴はありません</div>'}
+const sB=document.getElementById('sBounce'),sF=document.getElementById('sFriction'),sP=document.getElementById('sPower');
+function syncSliders(){sB.value=S.bounce;sF.value=S.friction;sP.value=S.power;
+  document.getElementById('vBounce').textContent=(+S.bounce).toFixed(2);document.getElementById('vFriction').textContent=(+S.friction).toFixed(2);document.getElementById('vPower').textContent=(+S.power).toFixed(2)+'×';
+  document.getElementById('sliders').style.display=S.play?'block':'none';
+  document.getElementById('rollBtn').textContent=rolling?(S.play?'止める':'転がっています…'):(S.play?'転がし続ける':'振る');}
+[sB,sF,sP].forEach(el=>el.oninput=()=>{S.bounce=+sB.value;S.friction=+sF.value;S.power=+sP.value;applyPhysicsParams();save();syncSliders()});
+document.getElementById('anim').checked=S.anim; document.getElementById('play').checked=S.play;
+document.getElementById('anim').onchange=e=>{S.anim=e.target.checked;save()};
+document.getElementById('play').onchange=e=>{S.play=e.target.checked;save();syncSliders()};
+document.getElementById('resetHist').onclick=()=>{S.history=[];save();renderHistory()};
+// --- roll loop ---
+let rolling=false, tumbling=false, agitate=null, settleTimer=null, startedAt=0;
+const overlay=document.getElementById('overlay');
+function allSettled(){return dice.every(d=>d.body.velocity.length()<0.25&&d.body.angularVelocity.length()<0.6&&d.body.position.y<2)}
+function finalize(){
+  tumbling=false; if(agitate)clearInterval(agitate); rolling=false;
+  dice.forEach(d=>{if(d.body.position.y>3||Math.abs(d.body.position.x)>5||Math.abs(d.body.position.z)>5){d.body.position.set(secureRange(-2,2),3,secureRange(-2,2));d.body.velocity.set(0,0,0)}});
+  dice.filter(isLeaning).forEach(d=>{d.body.velocity.y+=1.2; d.body.angularVelocity.x+=2});
+  const results={}; let total=0;
+  TYPES.forEach(t=>{results[t]=dice.filter(d=>d.type===t).map(readDie); total+=results[t].reduce((a,b)=>a+b,0)});
+  const detail=TYPES.filter(t=>results[t].length).map(t=>`d${t}: ${results[t].join(', ')}（小計 ${results[t].reduce((a,b)=>a+b,0)}）`).join(' ／ ');
+  S.lastTotal=total;S.lastConfig={...S.counts};S.history.unshift({total,detail,time:new Date().toLocaleString('ja-JP')});S.history=S.history.slice(0,20);save();
+  document.getElementById('result').innerHTML=`<div class="total">合計 ${total}</div><div>${detail}</div>`;
+  overlay.style.display='none'; renderFooter(); renderHistory(); syncSliders();
+}
+function checkSettle(){
+  if(!rolling)return;
+  if(!tumbling&&((allSettled()&&Date.now()-startedAt>1200)||Date.now()-startedAt>12000)){finalize();return}
+  settleTimer=setTimeout(checkSettle,300);
+}
+function startRoll(){
+  if(totalCount()===0){alert('サイコロを1個以上選んでください');return}
+  spawn(); rolling=true; startedAt=Date.now(); applyPhysicsParams();
+  overlay.style.display=S.anim?'none':'flex';
+  if(S.play){tumbling=true; agitate=setInterval(()=>{dice.forEach(d=>{d.body.velocity.x+=secureRange(-2.4,2.4);d.body.velocity.y+=secureRange(1.2,3.2);d.body.velocity.z+=secureRange(-2.4,2.4);d.body.angularVelocity.x+=secureRange(-4,4);d.body.angularVelocity.z+=secureRange(-4,4)})},420)}
+  syncSliders(); checkSettle();
+}
+document.getElementById('rollBtn').onclick=()=>{
+  if(rolling&&S.play&&tumbling){tumbling=false; if(agitate)clearInterval(agitate); dice.forEach(d=>{d.body.linearDamping=0.55;d.body.angularDamping=0.65}); startedAt=Date.now()-4000; syncSliders(); return}
+  if(rolling)return; startRoll();
+};
+// render loop
+const clock=new THREE.Clock();
+(function loop(){requestAnimationFrame(loop); const dt=Math.min(clock.getDelta(),0.05);
+  if(dice.length){world.step(1/60,dt,3); dice.forEach(d=>{d.mesh.position.copy(d.body.position); d.mesh.quaternion.copy(d.body.quaternion);
+    if(d.body.position.y<-3){d.body.position.set(secureRange(-2,2),4,secureRange(-2,2));d.body.velocity.set(0,0,0)} // tray-escape fallback: drop back in
+  })}
+  renderer.render(scene,camera);
+})();
+renderControls(); renderFooter(); renderHistory(); syncSliders(); applyPhysicsParams();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
+</script></body></html>
